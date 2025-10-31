@@ -1,4 +1,4 @@
-// Automatically generate order IDs (OD YYYY MM DD hh mm ss SSS)
+// Tự động tạo orderID theo quy luật (OD YYYY MM DD hh mm ss SSS)
 // Ex: OD20251027152330041
 export function newOrderCode() {
   const d = new Date();
@@ -16,7 +16,7 @@ export function newOrderCode() {
 }
 
 /**
- * Format currency (VND)
+ * Format tiền tệ (VND)
  * @param {number} amount
  * @returns {string}
  */
@@ -24,7 +24,7 @@ export function formatCurrency(amount) {
   return amount?.toLocaleString("vi-VN", { style: "currency", currency: "VND" }) || "0 ₫";
 }
 
-// ISO date and time format → dd/mm/yyyy hh:mm:ss
+// Format thời gian theo ÍO→ dd/mm/yyyy hh:mm:ss
 
 export function formatDateTime(iso) {
   if (!iso) return null;

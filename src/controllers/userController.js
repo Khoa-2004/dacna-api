@@ -1,13 +1,18 @@
 import * as User from "../models/userModel.js";
 import jwt from "jsonwebtoken";
 
-// Register
+// Đăng kí
 export async function register(req, res, next) {
   try {
     const { username, email, pw, phone } = req.body;
     if (!username || !email || !pw) throw new Error("Thiếu dữ liệu bắt buộc");
+    
+    // Check coi có đúng định dạng email ko
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+      throw new Error("Email không hợp lệ");
 
-    // Check for duplicate email or username
+
+    // Coi có trùng email/sđt ko
     const exist = await User.findUserByUsernameOrEmail(email);
     if (exist) throw new Error("Tài khoản đã tồn tại");
 
@@ -22,7 +27,7 @@ export async function register(req, res, next) {
   }
 }
 
-// Login
+// Đăng nhập
 export async function login(req, res, next) {
   try {
     const { usernameOrEmail, pw } = req.body;
@@ -30,11 +35,13 @@ export async function login(req, res, next) {
 
     const user = await User.findUserByUsernameOrEmail(usernameOrEmail);
     if (!user || user.pw !== pw)
-      return res.status(401).json({ ok: false, error: "Sai thông tin đăng nhập" });
+      return res
+        .status(401)
+        .json({ ok: false, error: "Sai thông tin đăng nhập" });
 
-    // Create JWT
+    // Tạo token jwt
     const token = jwt.sign(
-      { id: user.id, roles: user.roles },
+      { id: user.id, role: user.roles },
       process.env.JWT_SECRET,
       { expiresIn: "2h" }
     );

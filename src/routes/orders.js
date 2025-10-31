@@ -8,24 +8,25 @@ import {
   pay,
   updateStatus,
 } from "../controllers/orderController.js";
+import { authMiddleware, roleMiddleware } from "../middlewares/auth.js";
 
 const router = Router();
 
 router.post("/", create);
 
-// Product details
-router.get("/:id", detail);
+router.get("/:id", authMiddleware, detail);
 
-router.post("/:id/items", addItem);
+router.post("/:id/items", authMiddleware, addItem);
 
 router.delete("/:id/items/:productId", removeItem);
 
-// Calculate the total (includes shipping)
+// Tính tổng giá tiền (có ship)
 router.post("/:id/checkout", checkout);
 
 router.post("/:id/pay", pay);
 
-// (shipping, delivered, cancelled,...)
-router.post("/:id/status", updateStatus);
+// Trạng thái (shipping, delivered, cancelled,...) chỉ admin/staff là thay đổi đc
+router.patch("/:id/status", authMiddleware, roleMiddleware(["admin", "staff"]), updateStatus);
 
+router.delete("/:orderId/items/:productId", authMiddleware, removeItem);
 export default router;

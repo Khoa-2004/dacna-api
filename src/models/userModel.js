@@ -1,6 +1,6 @@
 import { pool } from "../db.js";
 
-// Create a user
+// Tạo ng dùng
 export async function createUser({ username, email, pw, phone }) {
   const [result] = await pool.execute(
     `INSERT INTO Users (username, email, phone, pw, roles, created_at, updated_at)
@@ -10,13 +10,11 @@ export async function createUser({ username, email, pw, phone }) {
   return result.insertId;
 }
 
-// Find a user  by username or email
-export async function findUserByUsernameOrEmail(u) {
-  const [rows] = await pool.execute(
-    `SELECT * FROM Users 
-     WHERE LOWER(username)=LOWER(:u) OR LOWER(email)=LOWER(:u)
-     LIMIT 1`,
-    { u }
+// Tìm ng dùng = userame/email
+export async function findUserByUsernameOrEmail(value) {
+  const [rows] = await pool.query(
+    "SELECT * FROM users WHERE username = ? OR email = ? LIMIT 1",
+    [value, value]
   );
-  return rows[0];
+  return rows.length ? rows[0] : null;
 }

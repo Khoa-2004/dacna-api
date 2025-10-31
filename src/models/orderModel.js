@@ -1,176 +1,168 @@
 import { pool } from "../db.js";
-import { newOrderCode } from "../utils/helpers.js";
 
-// Create and empty cart (status = cart)
-export async function createOrder({ user_id, address_street, address_district, address_ward, address_city }) {
-  const order_code = newOrderCode();
-  const [result] = await pool.execute(
-    `INSERT INTO orders
-     (order_code, user_id, address_street, address_district, address_ward, address_city,
-      subtotal, shipping_fee, discount_total, grand_total,
-      payment_method, payment_status, order_status,
-      created_at, updated_at)
-     VALUES
-     (:order_code, :user_id, :street, :district, :ward, :city,
-      0, 0, 0, 0, 'cod', 'unpaid', 'cart', NOW(), NOW())`,
-    { order_code, user_id, street: address_street, district: address_district, ward: address_ward, city: address_city }
+// Tạo order mới
+export async function createOrder({
+  user_id,
+  address_street,
+  address_district,
+  address_ward,
+  address_city,
+}) {
+  // Tạo mã order ngẫu nhiên
+  const order_code = `OD${Date.now()}${Math.floor(Math.random() * 1000)}`;
+
+  const [result] = await pool.query(
+    `INSERT INTO orders (order_code, user_id, address_street, address_district, address_ward, address_city)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [order_code, user_id, address_street, address_district, address_ward, address_city]
   );
+
   return { id: result.insertId, order_code };
 }
 
-// Get order detais and items
-export async function getOrderDetail(id) {
-  const [[order]] = await pool.query(`SELECT * FROM orders WHERE id=:id`, { id });
-  if (!order) return null;
+// Lấy thông tin order theo ID
+export async function getOrderById(orderId) {
+  const [rows] = await pool.query(
+    "SELECT id, user_id, order_code, order_status FROM orders WHERE id = ?",
+    [orderId]
+  );
+  return rows.length ? rows[0] : null;
+}
+
+// Lấy chi tiết order (kèm items)
+export async function getOrderDetail(orderId) {
+  const [orders] = await pool.query(
+    "SELECT id, user_id, order_code, order_status, subtotal, shipping_fee, grand_total, payment_status, created_at, updated_at FROM orders WHERE id = ?",
+    [orderId]
+  );
+  if (!orders.length) return null;
+
+  const order = orders[0];
   const [items] = await pool.query(
-    `SELECT product_id, item_name_snapshot, unit_price, qty, amount 
-     FROM order_items WHERE order_id=:id`,
-    { id }
+    "SELECT product_id, item_name_snapshot, unit_price, qty, amount FROM order_items WHERE order_id = ?",
+    [orderId]
   );
   order.items = items;
   return order;
 }
 
-// Add or update items
-export async function upsertItem(order_id, product_id, qty) {
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-
-    const [[order]] = await conn.query(`SELECT order_status FROM orders WHERE id=:id`, { id: order_id });
-    if (!order) throw new Error("Order not found");
-    if (order.order_status !== "cart") throw new Error("Order is not editable");
-
-    const [[p]] = await conn.query(`SELECT id, name, sale_price, is_active FROM products WHERE id=:pid`, { pid: product_id });
-    if (!p || p.is_active !== 1) throw new Error("Invalid product");
-
-    const [[exist]] = await conn.query(
-      `SELECT id FROM order_items WHERE order_id=:oid AND product_id=:pid`,
-      { oid: order_id, pid: product_id }
-    );
-
-    if (!exist) {
-      await conn.execute(
-        `INSERT INTO order_items
-         (order_id, product_id, item_name_snapshot, unit_price, qty, created_at)
-         VALUES (:oid, :pid, :name, :price, :qty, NOW())`,
-        { oid: order_id, pid: product_id, name: p.name, price: p.sale_price, qty }
-      );
-    } else {
-      await conn.execute(
-        `UPDATE order_items SET qty=:qty, unit_price=:price WHERE id=:id`,
-        { qty, price: p.sale_price, id: exist.id }
-      );
-    }
-
-    await recalcTotals(conn, order_id);
-    await conn.commit();
-  } catch (err) {
-    await conn.rollback();
-    throw err;
-  } finally {
-    conn.release();
-  }
-}
-
-// Delete item from order
-export async function removeItem(order_id, product_id) {
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-
-    const [[o]] = await conn.query(`SELECT order_status FROM orders WHERE id=:id`, { id: order_id });
-    if (!o) throw new Error("Order not found");
-    if (o.order_status !== "cart") throw new Error("Order is not editable");
-
-    await conn.execute(`DELETE FROM order_items WHERE order_id=:oid AND product_id=:pid`, { oid: order_id, pid: product_id });
-    await recalcTotals(conn, order_id);
-    await conn.commit();
-  } catch (err) {
-    await conn.rollback();
-    throw err;
-  } finally {
-    conn.release();
-  }
-}
-
-// Update subtotal and grandtotal
-export async function recalcTotals(conn, order_id) {
-  const [[{ subtotal }]] = await conn.query(
-    `SELECT COALESCE(SUM(amount),0) AS subtotal FROM order_items WHERE order_id=:id`,
-    { id: order_id }
+// Lấy danh sách item theo order
+export async function getOrderItems(orderId) {
+  const [rows] = await pool.query(
+    "SELECT * FROM order_items WHERE order_id = ?",
+    [orderId]
   );
-  await conn.execute(
-    `UPDATE orders SET subtotal=:subtotal, grand_total=(subtotal + shipping_fee - discount_total) WHERE id=:id`,
-    { subtotal, id: order_id }
+  return rows;
+}
+
+// Thêm hoặc cập nhật item trong order
+export async function upsertItem(orderId, productId, qty) {
+  // Lấy thông tin sản phẩm
+  const [products] = await pool.query(
+    "SELECT name, sale_price FROM products WHERE id = ? AND is_active = 1",
+    [productId]
+  );
+  if (!products.length)
+    throw new Error("Sản phẩm không tồn tại hoặc ngừng kinh doanh");
+
+  const product = products[0];
+
+  // Thêm hoặc cập nhật item
+  await pool.query(
+    `INSERT INTO order_items (order_id, product_id, item_name_snapshot, unit_price, qty)
+     VALUES (?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE 
+       qty = VALUES(qty), 
+       unit_price = VALUES(unit_price),
+       item_name_snapshot = VALUES(item_name_snapshot)`,
+    [orderId, productId, product.name, product.sale_price, qty]
+  );
+}
+
+// Xóa item khỏi order
+export async function removeItem(orderId, productId) {
+  const [result] = await pool.query(
+    "DELETE FROM order_items WHERE order_id = ? AND product_id = ?",
+    [orderId, productId]
+  );
+
+  if (result.affectedRows === 0)
+    throw new Error("Sản phẩm không tồn tại trong đơn hàng");
+}
+
+// Tính lại subtotal, phí ship, grand_total
+export async function recalculateTotals(orderId) {
+  const [rows] = await pool.query(
+    "SELECT SUM(amount) AS subtotal FROM order_items WHERE order_id = ?",
+    [orderId]
+  );
+
+  const subtotal = rows[0].subtotal || 0;
+  const shipping_fee = subtotal > 0 && subtotal < 500000 ? 30000 : 0;
+
+  await pool.query(
+    `UPDATE orders
+     SET subtotal = ?, 
+         shipping_fee = ?, 
+         grand_total = subtotal + shipping_fee - discount_total
+     WHERE id = ?`,
+    [subtotal, shipping_fee, orderId]
   );
 }
 
 // Checkout
-export async function checkoutOrder(id) {
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
+export async function checkoutOrder(orderId) {
+  const [orderRows] = await pool.query("SELECT order_status FROM orders WHERE id = ?", [orderId]);
+  if (!orderRows.length) throw new Error("Không tìm thấy đơn hàng");
 
-    const [[o]] = await conn.query(`SELECT order_status FROM orders WHERE id=:id`, { id });
-    if (!o) throw new Error("Order not found");
-    if (o.order_status !== "cart") throw new Error("Order is not a cart");
+  const order = orderRows[0];
+  if (order.order_status !== "cart")
+    throw new Error("Đơn hàng đã được checkout");
 
-    const [[{ items }]] = await conn.query(`SELECT COUNT(*) AS items FROM order_items WHERE order_id=:id`, { id });
-    if (items === 0) throw new Error("Cart is empty");
-
-    await recalcTotals(conn, id);
-    const [[{ subtotal }]] = await conn.query(`SELECT subtotal FROM orders WHERE id=:id`, { id });
-    const shipping_fee = subtotal >= 500000 ? 0 : 30000;
-
-    await conn.execute(
-      `UPDATE orders
-       SET shipping_fee=:sf, grand_total=(subtotal + :sf - discount_total),
-           order_status='awaiting_payment', updated_at=NOW()
-       WHERE id=:id`,
-      { sf: shipping_fee, id }
-    );
-
-    await conn.commit();
-  } catch (err) {
-    await conn.rollback();
-    throw err;
-  } finally {
-    conn.release();
-  }
-}
-
-// Order payment
-export async function payOrder(id, method) {
-  const [r] = await pool.query(`SELECT order_status FROM orders WHERE id=:id`, { id });
-  if (!r.length) throw new Error("Order not found");
-  const st = r[0].order_status;
-  if (!["awaiting_payment", "created"].includes(st)) throw new Error("Order not awaiting payment");
-
-  await pool.execute(
-    `UPDATE orders
-     SET payment_method=:pm, payment_status='paid', order_status='paid', updated_at=NOW()
-     WHERE id=:id`,
-    { pm: method === "card" ? "card" : "cod", id }
+  await pool.query(
+    "UPDATE orders SET order_status = 'awaiting_payment' WHERE id = ?",
+    [orderId]
   );
 }
 
-// Update order status
-export async function updateStatus(id, newStatus) {
-  const valid = ["created", "awaiting_payment", "paid", "processing", "shipping", "delivered", "failed", "cancelled"];
-  if (!valid.includes(newStatus)) throw new Error("Invalid status");
+// Thanh toán
+export async function payOrder(orderId, method) {
+  const [orders] = await pool.query("SELECT order_status FROM orders WHERE id = ?", [orderId]);
+  if (!orders.length) throw new Error("Không tìm thấy đơn hàng");
 
-  let shipped = null, delivered = null;
-  if (newStatus === "shipping") shipped = new Date();
-  if (newStatus === "delivered") delivered = new Date();
+  const order = orders[0];
+  if (!["awaiting_payment", "created"].includes(order.order_status))
+    throw new Error("Không thể thanh toán đơn hàng ở trạng thái hiện tại");
 
-  await pool.execute(
-    `UPDATE orders
-     SET order_status=:st,
-         shipped_at=IF(:shipped IS NULL, shipped_at, :shipped),
-         delivered_at=IF(:delivered IS NULL, delivered_at, :delivered),
-         updated_at=NOW()
-     WHERE id=:id`,
-    { st: newStatus, shipped, delivered, id }
+  await pool.query(
+    `UPDATE orders 
+     SET payment_method = ?, 
+         payment_status = 'paid',
+         order_status = 'paid',
+         updated_at = NOW()
+     WHERE id = ?`,
+    [method, orderId]
+  );
+}
+
+// Cập nhật trạng thái đơn (Admin/Staff)
+export async function updateStatus(orderId, newStatus) {
+  const validStatuses = [
+    "created",
+    "awaiting_payment",
+    "paid",
+    "processing",
+    "shipping",
+    "delivered",
+    "failed",
+    "cancelled",
+  ];
+
+  if (!validStatuses.includes(newStatus))
+    throw new Error("Trạng thái không hợp lệ");
+
+  await pool.query(
+    "UPDATE orders SET order_status = ?, updated_at = NOW() WHERE id = ?",
+    [newStatus, orderId]
   );
 }

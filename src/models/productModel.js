@@ -1,6 +1,6 @@
 import { pool } from "../db.js";
 
-/** 📦 Tạo sản phẩm mới */
+// Tạo sản phẩm mới
 export async function createProduct({
   sku,
   name,
@@ -38,7 +38,7 @@ export async function createProduct({
   return result.insertId;
 }
 
-// Get list of active products
+// Lấy ds sp active
 export async function listProducts() {
   const [rows] = await pool.query(
     `SELECT id, sku, name, brand_name, category_name, price, sale_price, stock_qty, thumbnail_url
